@@ -1,0 +1,67 @@
+# config/gitleaks-estate.toml: the estate's gitleaks configuration (planning #2928).
+#
+# SOURCE: neckarshore-ai/dev-environment, config/gitleaks-estate.toml. A copy,
+# byte for byte, lives in the public neckarshore-ai/.github under the same path;
+# dev-environment's CI goes red when the two differ. Change it in the source.
+#
+# Two readers:
+#   1. The PreToolUse hook secrets-gate-v1 (dev-environment,
+#      scripts/hooks/secrets-gate.py) on every `git commit` and `git push`
+#      through Claude Code.
+#   2. The reusable workflow neckarshore-ai/.github,
+#      .github/workflows/secrets-gate.yml, over the commits of a pull request.
+#
+# What it adds to gitleaks' default rules: four PATH rules. Measured 2026-10-03
+# on kaze's tracked `relay/.wrangler/cache/wrangler-account.json`: the default
+# rules report "no leaks found", a path rule reports one. These files carry
+# account ids and tokens in shapes no content rule knows, so the path is the rule.
+#
+# The three PII rules (e-mail, German phone number, IBAN) are NOT here. Founder
+# decision 2026-10-06 (#2928 comment 6010409031): they run in CI only in
+# version 1, from config/gitleaks-estate-pii.toml. A repository's own names go
+# into an UNCOMMITTED `.pii-denylist` at its root, one per line; the hook turns
+# that list into a rule at scan time. The list must be in that repository's
+# `.gitignore`: an untracked file is scanned like any other, and the list would
+# match itself and block every commit.
+#
+# A path rule sees a file only where gitleaks gets a diff of it. In a range scan
+# a BINARY file (.p12 always, .key often) yields none unless git is told to treat
+# it as text: the reusable workflow passes `--text` for that reason (measured
+# 2026-10-07: without it bin.p12 and bin.key pass, with it both are reported).
+# The hook's working-tree scan has no such switch; a binary key file passes it
+# today. Named gap, planning #2928.
+#
+# Case: the path rules ignore it (`.ENV`, `UP.PEM`). Suffixes: `.env.production.local`
+# is an environment file like `.env.local`.
+#
+# False positive in one repository: `gitleaks:allow` on the line, or the
+# finding's fingerprint in that repository's `.gitleaksignore`.
+
+title = "Neckarshore AI estate: secrets and credential paths"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "estate-path-wrangler"
+description = "Wrangler state directory (.wrangler/): account ids and cached tokens"
+path = '''(^|/)\.wrangler/'''
+
+[[rules]]
+id = "estate-path-dotenv"
+description = "Environment file (.env, .env.<name>, .env.<name>.<name>)"
+path = '''(?i)(^|/)\.env(\.[A-Za-z0-9_-]+)*$'''
+
+  [[rules.allowlists]]
+  description = "Templates carry variable names, not values"
+  paths = ['''(?i)(^|/)\.env(\.[A-Za-z0-9_-]+)*\.(example|sample|template|dist)$''']
+
+[[rules]]
+id = "estate-path-keyfile"
+description = "Private key or certificate bundle (.pem, .p12, .key)"
+path = '''(?i)\.(pem|p12|key)$'''
+
+[[rules]]
+id = "estate-path-credentials-json"
+description = "Credentials file (credentials*.json)"
+path = '''(?i)(^|/)credentials[^/]*\.json$'''
