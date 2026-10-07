@@ -1,0 +1,41 @@
+# config/gitleaks-estate-pii.toml: the three PII rules of planning #2928.
+#
+# SOURCE: neckarshore-ai/dev-environment, config/gitleaks-estate-pii.toml. A
+# copy, byte for byte, lives in the public neckarshore-ai/.github under the same
+# path; dev-environment's CI goes red when the two differ. Change it in the source.
+#
+# CI ONLY in version 1 (Founder decision 2026-10-06, #2928 comment 6010409031):
+# these rules fire on addresses the estate writes on purpose (a customer's
+# business address in a planning document), and in a fail-closed hook every
+# such hit is a blocked commit. In CI they run as a step of their own in the
+# reusable workflow neckarshore-ai/.github, .github/workflows/secrets-gate.yml;
+# a finding is reported and does not fail the job.
+# No default rules here: this file is PII and nothing else.
+
+title = "Neckarshore AI estate: personal data (CI only)"
+
+[[rules]]
+id = "estate-pii-email"
+description = "E-mail address outside the estate's own and the reserved test domains"
+regex = '''\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b'''
+
+  [[rules.allowlists]]
+  description = "Own domains, reserved test domains, service addresses"
+  regexTarget = "match"
+  regexes = [
+    '''(?i)@([A-Za-z0-9-]+\.)*(neckarshore\.ai|omnopsis\.ai|rauhut\.com|anthropic\.com|github\.com)$''',
+    '''(?i)@([A-Za-z0-9-]+\.)*(example\.(com|org|net)|beispiel\.de)$''',
+    '''(?i)\.(invalid|test|local|localhost|example)$''',
+    '''(?i)^(noreply|no-reply|git)@''',
+    '''(?i)@[0-9]+x\.(png|jpg|jpeg|webp)$''',
+  ]
+
+[[rules]]
+id = "estate-pii-phone-de"
+description = "German phone number (+49 or 0049)"
+regex = '''(\+49|\b0049)[ \-/]?\(?0?\)?[ \-/]?[1-9][0-9]{1,4}[ \-/]?[0-9]{3,}([ \-/]?[0-9]{2,})*'''
+
+[[rules]]
+id = "estate-pii-iban"
+description = "IBAN (DE, AT, CH)"
+regex = '''\b(DE|AT|CH)[0-9]{2}( ?[0-9A-Z]{4}){3,7}( ?[0-9A-Z]{1,4})?\b'''
