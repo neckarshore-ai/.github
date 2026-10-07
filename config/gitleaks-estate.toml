@@ -24,6 +24,16 @@
 # `.gitignore`: an untracked file is scanned like any other, and the list would
 # match itself and block every commit.
 #
+# A path rule sees a file only where gitleaks gets a diff of it. In a range scan
+# a BINARY file (.p12 always, .key often) yields none unless git is told to treat
+# it as text: the reusable workflow passes `--text` for that reason (measured
+# 2026-10-07: without it bin.p12 and bin.key pass, with it both are reported).
+# The hook's working-tree scan has no such switch; a binary key file passes it
+# today. Named gap, planning #2928.
+#
+# Case: the path rules ignore it (`.ENV`, `UP.PEM`). Suffixes: `.env.production.local`
+# is an environment file like `.env.local`.
+#
 # False positive in one repository: `gitleaks:allow` on the line, or the
 # finding's fingerprint in that repository's `.gitleaksignore`.
 
@@ -39,19 +49,19 @@ path = '''(^|/)\.wrangler/'''
 
 [[rules]]
 id = "estate-path-dotenv"
-description = "Environment file (.env, .env.<name>)"
-path = '''(^|/)\.env(\.[A-Za-z0-9_-]+)?$'''
+description = "Environment file (.env, .env.<name>, .env.<name>.<name>)"
+path = '''(?i)(^|/)\.env(\.[A-Za-z0-9_-]+)*$'''
 
   [[rules.allowlists]]
   description = "Templates carry variable names, not values"
-  paths = ['''(^|/)\.env\.(example|sample|template|dist)$''']
+  paths = ['''(?i)(^|/)\.env(\.[A-Za-z0-9_-]+)*\.(example|sample|template|dist)$''']
 
 [[rules]]
 id = "estate-path-keyfile"
 description = "Private key or certificate bundle (.pem, .p12, .key)"
-path = '''\.(pem|p12|key)$'''
+path = '''(?i)\.(pem|p12|key)$'''
 
 [[rules]]
 id = "estate-path-credentials-json"
 description = "Credentials file (credentials*.json)"
-path = '''(^|/)credentials[^/]*\.json$'''
+path = '''(?i)(^|/)credentials[^/]*\.json$'''
