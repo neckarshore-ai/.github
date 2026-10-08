@@ -1,0 +1,15 @@
+name: scratch-probe (never merge)
+
+# Throwaway caller for planning #2928 part 2, pinned to b28f9c4 on main.
+# Push 1: this file and a made-up phone number, expected green with a
+# personal-data warning. Push 2: an empty .env, expected red.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    uses: neckarshore-ai/.github/.github/workflows/secrets-gate.yml@b28f9c4b40fbdd6580b9ccf7476589db6e977ba4
