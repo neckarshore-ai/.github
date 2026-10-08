@@ -13,4 +13,4 @@ permissions:
 
 jobs:
   secrets:
-    uses: neckarshore-ai/.github/.github/workflows/secrets-gate.yml@2cdb78c01fe6df48674d369c54acf51809ec95df
+    uses: neckarshore-ai/.github/.github/workflows/secrets-gate.yml@14266ab9fd3bbe875e252ba1d34772c30f9db1cc
