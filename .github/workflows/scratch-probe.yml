@@ -1,0 +1,15 @@
+name: scratch-probe (never merge)
+
+# Throwaway caller for planning #2928 part 2, pinned to the merged fix on main.
+# Push 1: this file alone, expected green. Push 2: a planted credential file
+# name, expected red. Closed without merge, branch deleted.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    uses: neckarshore-ai/.github/.github/workflows/secrets-gate.yml@5d06eae25f91b948c71190c3fa778f91fee81db2
