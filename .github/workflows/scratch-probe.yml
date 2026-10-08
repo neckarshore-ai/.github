@@ -1,0 +1,16 @@
+name: scratch-probe (never merge)
+
+# Throwaway caller for planning #2928 part 2: does the reusable workflow at
+# 2cdb78c01fe6df48674d369c54acf51809ec95df receive job.workflow_repository and job.workflow_sha
+# in step env? Expected: step 1 prints the rules line, the main test refuses
+# (the pin is a branch commit). This branch is deleted after the run.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    uses: neckarshore-ai/.github/.github/workflows/secrets-gate.yml@2cdb78c01fe6df48674d369c54acf51809ec95df
