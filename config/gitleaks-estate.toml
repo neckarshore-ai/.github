@@ -11,7 +11,8 @@
 #   2. The reusable workflow neckarshore-ai/.github,
 #      .github/workflows/secrets-gate.yml, over the commits of a pull request.
 #
-# What it adds to gitleaks' default rules: four PATH rules. Measured 2026-10-03
+# What it adds to gitleaks' default rules: one content rule (Anthropic tokens,
+# below) and four PATH rules. Measured 2026-10-03
 # on kaze's tracked `relay/.wrangler/cache/wrangler-account.json`: the default
 # rules report "no leaks found", a path rule reports one. These files carry
 # account ids and tokens in shapes no content rule knows, so the path is the rule.
@@ -42,6 +43,22 @@ title = "Neckarshore AI estate: secrets and credential paths"
 [extend]
 useDefault = true
 
+# One CONTENT rule (planning #3511, James' text verbatim from report
+# 2026-10-22-james-oat01-gate, the same text as in musclecat and kaze so the
+# homes cannot drift). gitleaks 8.30.1 knows the Anthropic kinds api03 and
+# admin01 only, and its generic rule drops every value that contains the
+# stopword "ant-": the Claude subscription token sk-ant-oat01- and its refresh
+# kind were caught by no scanner in the estate (0 of 50). No length in the
+# regex on purpose: the real length is unmeasured, and a length would let a real
+# token pass while the probe stays green. On api03 and admin01 it reports beside
+# the default rules, which is harmless.
+[[rules]]
+id = "estate-anthropic-sk-ant-token"
+description = "Anthropic token of any kind (sk-ant-<kind><nn>-), incl. the Claude subscription token sk-ant-oat01-"
+regex = '''\b(sk-ant-[a-z]{2,8}[0-9]{2}-[A-Za-z0-9_-]{20,})'''
+entropy = 3.0
+keywords = ["sk-ant-"]
+
 [[rules]]
 id = "estate-path-wrangler"
 description = "Wrangler state directory (.wrangler/): account ids and cached tokens"
@@ -63,5 +80,5 @@ path = '''(?i)\.(pem|p12|key)$'''
 
 [[rules]]
 id = "estate-path-credentials-json"
-description = "Credentials file (credentials*.json)"
-path = '''(?i)(^|/)credentials[^/]*\.json$'''
+description = "Credentials file (credentials*.json, .credentials*.json)"
+path = '''(?i)(^|/)\.?credentials[^/]*\.json$'''
