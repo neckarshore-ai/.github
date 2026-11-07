@@ -1,0 +1,9 @@
+name: throwaway-secrets-gate-probe
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  secrets:
+    uses: neckarshore-ai/.github/.github/workflows/secrets-gate.yml@794d1defb4cd4ec3851cf081dcd70e02aa4a93af
