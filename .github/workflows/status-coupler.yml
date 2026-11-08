@@ -17,14 +17,15 @@ name: status-coupler
 #     coupler:
 #       if: github.event.pull_request.merged == true
 #       uses: neckarshore-ai/.github/.github/workflows/status-coupler.yml@<40-char SHA>
-#       with:
-#         no-ref-mode: comment    # or summary (planning)
+#
+# Callers set nothing: Engels' cut (#2930 comment 6722272482) is the default,
+# including the per-repository no-ref behaviour (planning summarises).
 #
 # What moves, what does not, and why: scripts/status_coupler.py, module doc.
-# In short: same-repository references to an open ticket that is not done
-# become in-review with one comment; done and closed tickets are never
-# touched; cross-repository and negated references only comment on the pull
-# request; no reference comments (or, in summary mode, only summarises).
+# In short: a same-repository reference to an open ticket on to-do or
+# in-progress becomes in-review with one comment; done, closed, in-review,
+# in-specification and unlabelled tickets are not moved; cross-repository and
+# negated references only comment on the pull request.
 #
 # Token: the caller's GITHUB_TOKEN with issues: write and pull-requests: write.
 # It reaches the caller's own repository only, which is the whole of slice 1
@@ -41,15 +42,6 @@ name: status-coupler
 
 on:
   workflow_call:
-    inputs:
-      no-ref-mode:
-        description: "comment (one PR comment when no ticket is named) or summary (job summary only)"
-        type: string
-        default: comment
-      keywords:
-        description: "closing,refs (default) or closing"
-        type: string
-        default: closing,refs
 
 permissions:
   contents: read
@@ -93,6 +85,4 @@ jobs:
           PR_BRANCH: ${{ github.event.pull_request.head.ref }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           MERGED_AT: ${{ github.event.pull_request.merged_at }}
-          NO_REF_MODE: ${{ inputs.no-ref-mode }}
-          KEYWORDS: ${{ inputs.keywords }}
         run: python3 -I "$RUNNER_TEMP/coupler/scripts/status_coupler.py"
