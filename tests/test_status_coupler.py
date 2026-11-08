@@ -158,10 +158,29 @@ class Run(unittest.TestCase):
         p, writes = self.go('Closes #12')
         self.assertEqual((p.returncode, writes), (1, []))
         self.assertIn('no in-review label', p.stdout)
+        self.assertIn('#12 not moved (no in-review label)', read(self.summary))
 
     def test_unknown_issue_fails_closed(self):
         p, writes = self.go('Closes #404')
         self.assertEqual((p.returncode, writes), (1, []))
+
+    def test_one_bad_reference_does_not_stop_the_rest(self):
+        # Refs #7055 is a typo (404); #12 must still move and the negation must still warn.
+        self.state(labels=['in-review'], issues={'12': self.issue(labels=['to-do'])})
+        p, writes = self.go('Refs #7055\nCloses #12\nDo not close #705')
+        self.assertEqual(p.returncode, 1)
+        self.assertTrue(any(w[:3] == ['issue', 'edit', '12'] for w in writes))
+        self.assertTrue(any(w[:2] == ['pr', 'comment'] and '#705' in w[-1] for w in writes))
+        out = read(self.summary)
+        self.assertIn('#7055 could not be read', out)
+        self.assertIn('1 error(s)', out)
+
+    def test_in_specification_is_not_moved(self):
+        self.state(labels=['in-review'], issues={'6': self.issue(labels=['in-specification'])})
+        p, writes = self.go('Refs #6')
+        self.assertEqual(p.returncode, 0)
+        self.assertFalse(any(w[0] == 'issue' for w in writes))
+        self.assertTrue(any(w[:2] == ['pr', 'comment'] and 'in-specification' in w[-1] for w in writes))
 
     def test_failed_write_fails_closed(self):
         self.state(labels=['in-review'], issues={'12': self.issue(labels=['to-do'])}, write_rc=1)

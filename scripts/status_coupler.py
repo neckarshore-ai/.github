@@ -5,14 +5,17 @@ Planning #2930 (RETRO-HEBEL-STATUS-COUPLER), writer half, slice 1. Called by
 .github/workflows/status-coupler.yml after a pull request is merged.
 
 What it reads: the pull request's title, body and head branch, from the
-environment (PR_TITLE, PR_BODY, PR_BRANCH). That text is untrusted: it is
+environment (PR_TITLE, PR_BODY, PR_BRANCH). A keyword needs whitespace before
+#N, so a branch name (bob/2930-x) never matches; the branch is read for the
+rare branch written as words. That text is untrusted: it is
 parsed, never executed, and only ticket numbers taken from it reach gh.
 
 What it does, per reference found:
   1. a reference in the SAME repository -> the ticket gets in-review instead of
-     to-do / in-progress / in-specification, plus one comment that names the
-     pull request. It is left alone when it is closed, already done, already
-     in-review, or is itself a pull request. `done` is never overwritten: that
+     to-do / in-progress, plus one comment that names the pull request. It is
+     left alone when it is closed, already done, already in-review, is itself a
+     pull request, or is in-specification (that move to to-do has two gates,
+     complete and approved, issue-workflow.md v5; the PR gets a note). `done` is never overwritten: that
      stays MASCHIN's PIR act (Completion rule 2) or a recorded Founder verdict.
   2. a reference to ANOTHER repository -> nothing moves; the pull request gets
      a comment that says so (slice 1 has no token for other repositories).
@@ -27,8 +30,10 @@ Keywords: KEYWORDS=closing,refs (default) or closing. `refs` is the completion
 signal on the app boards (135 of 164 hits in the replay); closing-only misses
 about four fifths of them. The cut is Engels' on #2930; this is its flag.
 
-Fail-closed: a repository without an in-review label, a gh call that fails or
-a malformed environment ends the run with exit 1 and a line that says which.
+Fail-closed: a malformed environment ends the run at once with exit 1. A
+repository without an in-review label or a gh call that fails is recorded per
+ticket and the run goes on (the other tickets, the PR notes, the summary);
+it then ends with exit 1 and lists every failure.
 --dry-run prints every write instead of making it (the tests use it).
 """
 
@@ -38,7 +43,7 @@ import re
 import subprocess
 import sys
 
-STATUS_FROM = ('to-do', 'in-progress', 'in-specification')
+STATUS_FROM = ('to-do', 'in-progress')
 TARGET = 'in-review'
 
 CLOSING = r'close[sd]?|fix(?:e[sd])?|resolve[sd]?'
@@ -125,13 +130,33 @@ def run(argv):
     gh = Gh(repo, dry_run)
     lines = []
 
-    if found['same']:
-        labels = {l['name'] for l in json.loads(gh.read('label', 'list', '--repo', repo, '--limit', '200', '--json', 'name'))}
-        if TARGET not in labels:
-            raise RuntimeError('%s has no %s label; create it (itsm-sync-manifest v5) before the coupler runs' % (repo, TARGET))
+    errors = []
 
-    for n in found['same']:
-        data = json.loads(gh.read('api', 'repos/%s/issues/%d' % (repo, n)))
+    def attempt(what, fn, *args):
+        """One failed gh call is recorded and the run goes on; the exit code says it at the end."""
+        try:
+            return fn(*args)
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            errors.append('%s: %s' % (what, exc))
+            return None
+
+    same = found['same']
+    if same:
+        out = attempt('label list', gh.read, 'label', 'list', '--repo', repo, '--limit', '200', '--json', 'name')
+        labels = {l['name'] for l in json.loads(out)} if out is not None else set()
+        if out is not None and TARGET not in labels:
+            errors.append('%s has no %s label; create it (itsm-sync-manifest v5) before the coupler runs' % (repo, TARGET))
+        if TARGET not in labels:
+            lines += ['#%d not moved (no %s label)' % (n, TARGET) for n in same]
+            same = []
+
+    pr_notes = []
+    for n in same:
+        out = attempt('#%d read' % n, gh.read, 'api', 'repos/%s/issues/%d' % (repo, n))
+        if out is None:
+            lines.append('#%d could not be read, not moved' % n)
+            continue
+        data = json.loads(out)
         names = {l['name'] for l in data.get('labels', [])}
         if 'pull_request' in data:
             lines.append('#%d is a pull request, not moved' % n)
@@ -145,17 +170,27 @@ def run(argv):
         if TARGET in names:
             lines.append('#%d already in-review' % n)
             continue
+        if 'in-specification' in names:
+            # Two gates sit on in-specification -> to-do (complete AND approved,
+            # issue-workflow.md v5). A merge must not jump them unseen.
+            lines.append('#%d is in-specification, not moved' % n)
+            pr_notes.append('coupler: #%d is in-specification, not moved — the move to to-do has two gates '
+                            '(complete and approved, issue-workflow.md v5)' % n)
+            continue
         args = ['issue', 'edit', str(n), '--repo', repo, '--add-label', TARGET]
         for old in STATUS_FROM:
             if old in names:
                 args += ['--remove-label', old]
-        gh.write(*args)
-        gh.write('issue', 'comment', str(n), '--repo', repo, '--body',
-                 'coupler: PR %s merged %s %s -> in-review (done stays MASCHIN\'s PIR act per Completion rule 2)'
-                 % (pr_url, merge_sha[:12], merged_at))
+        before = len(errors)
+        attempt('#%d edit' % n, gh.write, *args)
+        if len(errors) > before:
+            lines.append('#%d label move FAILED' % n)
+            continue
+        attempt('#%d comment' % n, gh.write, 'issue', 'comment', str(n), '--repo', repo, '--body',
+                'coupler: PR %s merged %s %s -> in-review (done stays MASCHIN\'s PIR act per Completion rule 2)'
+                % (pr_url, merge_sha[:12], merged_at))
         lines.append('#%d -> in-review' % n)
 
-    pr_notes = []
     for ref in found['cross']:
         org = ref.split('/')[0]
         pr_notes.append('coupler: cross-repo reference %s not moved — no token for %s (slice 2)' % (ref, org))
@@ -169,15 +204,19 @@ def run(argv):
         if no_ref_mode == 'comment':
             pr_notes.append('coupler: no issue reference found — label not moved')
     for note in pr_notes:
-        gh.write('pr', 'comment', pr_number, '--repo', repo, '--body', note)
+        attempt('PR comment', gh.write, 'pr', 'comment', pr_number, '--repo', repo, '--body', note)
 
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
     report = ['### status-coupler: %s#%s' % (repo, pr_number), ''] + ['- ' + l for l in lines]
+    if errors:
+        report += ['', '**%d error(s):**' % len(errors)] + ['- ' + e for e in errors]
     print('\n'.join(report))
     if summary and not dry_run:
         with open(summary, 'a', encoding='utf-8') as fh:
             fh.write('\n'.join(report) + '\n')
-    return 0
+    for e in errors:
+        print('::error::status-coupler: %s' % e)
+    return 1 if errors else 0
 
 
 def main(argv=None):
