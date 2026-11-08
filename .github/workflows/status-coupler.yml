@@ -31,6 +31,12 @@ name: status-coupler
 # It reaches the caller's own repository only, which is the whole of slice 1
 # (Founder decision 2026-10-03 on #2930). Cross-repository moves are slice 2.
 #
+# Runner: the caller repository's variable STATUS_COUPLER_RUNS_ON, a JSON list
+# such as ["self-hosted","review"]; hosted Linux when it is unset (as
+# secrets-gate.yml with SECRETS_GATE_RUNS_ON). A private repository on hosted
+# Linux pays about one billed minute per merged pull request. The job needs
+# git and python3 on the runner, nothing else.
+#
 # Untrusted input: the pull request's title, body and branch reach the script
 # through env only, never through ${{ }} inside run:. The script parses them
 # and passes nothing but ticket numbers to gh.
@@ -52,7 +58,7 @@ jobs:
   couple:
     name: status-coupler
     if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.STATUS_COUPLER_RUNS_ON || '["ubuntu-latest"]') }}
     timeout-minutes: 3
     steps:
       - name: Script from the pinned commit on main
