@@ -1,0 +1,24 @@
+name: status-coupler-tests
+
+# The tests of scripts/status_coupler.py (planning #2930) on every pull request
+# to main. Public repository, hosted Linux, free. Python standard library only;
+# gh is replaced by a fake on PATH, so nothing here touches GitHub.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: status-coupler-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Unit tests
+        run: python3 -W error::ResourceWarning -m unittest discover -s tests -v

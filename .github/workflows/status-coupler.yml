@@ -1,0 +1,98 @@
+name: status-coupler
+
+# Reusable workflow: a merged pull request moves the tickets it names to
+# in-review (planning #2930, RETRO-HEBEL-STATUS-COUPLER, writer half, slice 1).
+#
+# Call it from a repository's own workflow, pinned to a commit SHA of main:
+#
+#   on:
+#     pull_request:
+#       types: [closed]
+#       branches: [main]
+#   permissions:
+#     contents: read
+#     issues: write
+#     pull-requests: write
+#   jobs:
+#     coupler:
+#       if: github.event.pull_request.merged == true
+#       uses: neckarshore-ai/.github/.github/workflows/status-coupler.yml@<40-char SHA>
+#       with:
+#         no-ref-mode: comment    # or summary (planning)
+#
+# What moves, what does not, and why: scripts/status_coupler.py, module doc.
+# In short: same-repository references to an open ticket that is not done
+# become in-review with one comment; done and closed tickets are never
+# touched; cross-repository and negated references only comment on the pull
+# request; no reference comments (or, in summary mode, only summarises).
+#
+# Token: the caller's GITHUB_TOKEN with issues: write and pull-requests: write.
+# It reaches the caller's own repository only, which is the whole of slice 1
+# (Founder decision 2026-10-03 on #2930). Cross-repository moves are slice 2.
+#
+# Untrusted input: the pull request's title, body and branch reach the script
+# through env only, never through ${{ }} inside run:. The script parses them
+# and passes nothing but ticket numbers to gh.
+#
+# The script is read from THIS repository at the commit the caller pinned
+# (job.workflow_sha), cloned from main only, as secrets-gate.yml does: GitHub
+# resolves a commit of any fork under this repository's name, so a pin that is
+# not on main ends the job red before the script runs.
+
+on:
+  workflow_call:
+    inputs:
+      no-ref-mode:
+        description: "comment (one PR comment when no ticket is named) or summary (job summary only)"
+        type: string
+        default: comment
+      keywords:
+        description: "closing,refs (default) or closing"
+        type: string
+        default: closing,refs
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  couple:
+    name: status-coupler
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Script from the pinned commit on main
+        shell: bash
+        env:
+          CODE_REPOSITORY: ${{ job.workflow_repository }}
+          CODE_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::status-coupler: $1"; exit 1; }
+          [[ "$CODE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "the commit of this workflow is unknown ('$CODE_SHA')."
+          [[ "$CODE_REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || fail "unexpected workflow repository '$CODE_REPOSITORY'."
+          GIT_TERMINAL_PROMPT=0 git clone --quiet --no-checkout --single-branch --branch main \
+            "https://github.com/$CODE_REPOSITORY.git" "$RUNNER_TEMP/coupler" || fail "cannot clone main of $CODE_REPOSITORY."
+          cd "$RUNNER_TEMP/coupler"
+          git merge-base --is-ancestor "$CODE_SHA" refs/remotes/origin/main 2>/dev/null \
+            || fail "the pinned commit $CODE_SHA is not on main of $CODE_REPOSITORY. Pin a commit of main."
+          git -c advice.detachedHead=false checkout --quiet --detach "$CODE_SHA"
+          echo "script: $CODE_REPOSITORY@$CODE_SHA, on main"
+
+      - name: Move the named tickets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          MERGED_AT: ${{ github.event.pull_request.merged_at }}
+          NO_REF_MODE: ${{ inputs.no-ref-mode }}
+          KEYWORDS: ${{ inputs.keywords }}
+        run: python3 -I "$RUNNER_TEMP/coupler/scripts/status_coupler.py"
