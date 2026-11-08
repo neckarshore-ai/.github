@@ -43,6 +43,21 @@ class Parse(unittest.TestCase):
         r = sc.parse('the first poll window is not a STALL Closes #676', REPO)
         self.assertEqual((r['same'], r['negated']), ([676], []))
 
+    def test_the_three_real_wordings(self):
+        # verbatim from kaze #743/#724, kaze #745, musclecat #705 (Engels' sharpening 3)
+        for text, ref in (('waits for #704 slice 4. **Do not close #705** until', '#705'),
+                          ('For #704, slice 4 (does **not** close #704)', '#704'),
+                          ('criterion 7 is on `main`. **Do not close #692**', '#692')):
+            r = sc.parse(text, REPO)
+            self.assertEqual((r['same'], r['negated']), ([], [ref]), text)
+
+    def test_second_false_hit_of_the_wide_window(self):
+        # musclecat #538
+        self.assertEqual(sc.parse('a file that is not bundled Closes #516', REPO)['same'], [516])
+
+    def test_without_token(self):
+        self.assertEqual(sc.parse('merged without closes #3', REPO)['negated'], ['#3'])
+
     def test_contraction_negation(self):
         self.assertEqual(sc.parse("this doesn't close #9", REPO)['negated'], ['#9'])
 
@@ -130,11 +145,25 @@ class Run(unittest.TestCase):
         self.assertEqual((p.returncode, writes), (0, []))
         self.assertIn('carries done', p.stdout)
 
-    def test_closed_and_pr_and_already_in_review_untouched(self):
+    def test_closed_and_pr_untouched_silently(self):
         self.state(labels=['in-review'], issues={'1': self.issue(state='closed', labels=['in-progress']),
-                                                 '2': self.issue(pr=True), '3': self.issue(labels=['in-review'])})
-        p, writes = self.go('Refs #1\nRefs #2\nRefs #3')
+                                                 '2': self.issue(pr=True)})
+        p, writes = self.go('Refs #1\nRefs #2')
         self.assertEqual((p.returncode, writes), (0, []))
+
+    def test_in_review_and_unlabelled_get_a_pr_note(self):
+        self.state(labels=['in-review'], issues={'3': self.issue(labels=['in-review']), '4': self.issue(labels=['P2'])})
+        p, writes = self.go('Refs #3\nRefs #4')
+        self.assertEqual(p.returncode, 0)
+        self.assertFalse(any(w[0] == 'issue' for w in writes))
+        notes = [w[-1] for w in writes if w[:2] == ['pr', 'comment']]
+        self.assertEqual(notes, ['coupler: #3 carries in-review, not moved', 'coupler: #4 carries no status label, not moved'])
+
+    def test_markers_are_left_alone(self):
+        self.state(labels=['in-review'], issues={'9': self.issue(labels=['in-progress', 'blocked'])})
+        p, writes = self.go('Refs #9')
+        edit = [w for w in writes if w[:2] == ['issue', 'edit']][0]
+        self.assertEqual(edit[edit.index('--add-label'):], ['--add-label', 'in-review', '--remove-label', 'in-progress'])
 
     def test_cross_repo_and_negated_comment_on_pr_only(self):
         p, writes = self.go('Refs neckarshore-ai/neckarshore-planning#2930\nDo not close #705')
@@ -147,6 +176,11 @@ class Run(unittest.TestCase):
         p, writes = self.go('just a report')
         self.assertEqual(writes, [['pr', 'comment', '900', '--repo', REPO, '--body',
                                    'coupler: no issue reference found — label not moved']])
+
+    def test_planning_summarises_by_default(self):
+        p, writes = self.go('just a report', REPO='neckarshore-ai/neckarshore-planning')
+        self.assertEqual((p.returncode, writes), (0, []))
+        self.assertIn('no issue reference found', read(self.summary))
 
     def test_no_ref_summary_mode_writes_nothing_on_github(self):
         p, writes = self.go('just a report', NO_REF_MODE='summary')
@@ -180,7 +214,7 @@ class Run(unittest.TestCase):
         p, writes = self.go('Refs #6')
         self.assertEqual(p.returncode, 0)
         self.assertFalse(any(w[0] == 'issue' for w in writes))
-        self.assertTrue(any(w[:2] == ['pr', 'comment'] and 'in-specification' in w[-1] for w in writes))
+        self.assertIn(['pr', 'comment', '900', '--repo', REPO, '--body', 'coupler: #6 carries in-specification, not moved'], writes)
 
     def test_failed_write_fails_closed(self):
         self.state(labels=['in-review'], issues={'12': self.issue(labels=['to-do'])}, write_rc=1)

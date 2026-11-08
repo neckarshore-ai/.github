@@ -11,24 +11,25 @@ rare branch written as words. That text is untrusted: it is
 parsed, never executed, and only ticket numbers taken from it reach gh.
 
 What it does, per reference found:
-  1. a reference in the SAME repository -> the ticket gets in-review instead of
-     to-do / in-progress, plus one comment that names the pull request. It is
-     left alone when it is closed, already done, already in-review, is itself a
-     pull request, or is in-specification (that move to to-do has two gates,
-     complete and approved, issue-workflow.md v5; the PR gets a note). `done` is never overwritten: that
+  1. a reference in the SAME repository -> a ticket on to-do or in-progress
+     gets in-review instead, plus one comment that names the pull request.
+     Markers (blocked, failed-acceptance) are left as they are. Not moved: a
+     closed ticket, a done ticket, a pull request (silently), and a ticket on
+     in-review, in-specification or no status label (the PR gets a note). `done` is never overwritten: that
      stays MASCHIN's PIR act (Completion rule 2) or a recorded Founder verdict.
   2. a reference to ANOTHER repository -> nothing moves; the pull request gets
      a comment that says so (slice 1 has no token for other repositories).
   3. a NEGATED keyword ("Do not close #705") -> nothing moves; the pull request
      gets a warning, because GitHub's own parser closes on it anyway (kaze
      #704/#705, the mechanism that led here).
-  4. no reference at all -> NO_REF_MODE=comment writes one comment on the pull
-     request; NO_REF_MODE=summary writes only a line in the job summary (planning,
-     where 146 of 150 merged pull requests carry no keyword: comment 6722195126).
+  4. no reference at all -> one comment on the pull request; in planning
+     (SUMMARY_ONLY_REPOS) only a line in the job summary, because 146 of 150
+     of its merged pull requests carry no keyword (comment 6722195126).
 
-Keywords: KEYWORDS=closing,refs (default) or closing. `refs` is the completion
-signal on the app boards (135 of 164 hits in the replay); closing-only misses
-about four fifths of them. The cut is Engels' on #2930; this is its flag.
+Keywords: closing keywords and refs. `refs` is the completion signal on the app
+boards (135 of 164 hits in the replay); closing-only misses about four fifths of
+them. Engels' cut (#2930 comment 6722272482) is built in as the default; callers
+set nothing. KEYWORDS and NO_REF_MODE in the environment exist for the tests.
 
 Fail-closed: a malformed environment ends the run at once with exit 1. A
 repository without an in-review label or a gh call that fails is recorded per
@@ -44,11 +45,29 @@ import subprocess
 import sys
 
 STATUS_FROM = ('to-do', 'in-progress')
+# No-ref behaviour is a default per repository, not a caller flag (Engels' hand-off on
+# #2930): planning summarises, because 146 of 150 of its PRs name no ticket; every
+# other repository comments. NO_REF_MODE in the environment exists for the tests only.
+SUMMARY_ONLY_REPOS = {'neckarshore-ai/neckarshore-planning'}
 TARGET = 'in-review'
 
 CLOSING = r'close[sd]?|fix(?:e[sd])?|resolve[sd]?'
 REFS = r'refs?'
-NEGATION = re.compile(r"(?i)(?:\b(?:do|does|did|should|must|will|would)\s+not|\b\w+n't|\bnever|\bnot)[\s*_`]*$")
+# Negation guard (Engels' cut, #2930 comment 6722272482, sharpening 3). Built on the
+# three real cases of the replay (comment 6722195126), quoted verbatim:
+#   kaze #743, #724   "**Do not close #705"
+#   kaze #745         "does **not** close #704"
+#   musclecat #705    "**Do not close #692"
+# TOKENS: not, never, without, kein, nicht, and any contraction ending in n't
+#   (don't, doesn't, won't, ...); "do not" / "does not" are covered by "not".
+# WINDOW: the token must stand directly before the keyword on the same line,
+#   with nothing between them but whitespace and Markdown emphasis (* _ `).
+#   A "not" earlier in the sentence is not a negation of the keyword: musclecat
+#   #678 "is not a STALL Closes #676" and #538 "is not bundled Closes #516" were
+#   the two false hits of a wider window.
+# REACH: the guard keeps the coupler honest and warns on the PR. It does not
+#   undo GitHub's own close, which still happens on a negated closing keyword.
+NEGATION = re.compile(r"(?i)(?:\b(?:not|never|without|kein|nicht)|\b\w+n't)[\s*_`]*$")
 
 
 def keyword_re(keywords):
@@ -121,7 +140,7 @@ def run(argv):
         raise RuntimeError('PR_NUMBER %r is not a number' % pr_number)
     pr_url, merge_sha, merged_at = env('PR_URL'), env('MERGE_SHA'), env('MERGED_AT')
     keywords = tuple(k.strip() for k in env('KEYWORDS', False).split(',') if k.strip()) or ('closing', 'refs')
-    no_ref_mode = env('NO_REF_MODE', False) or 'comment'
+    no_ref_mode = env('NO_REF_MODE', False) or ('summary' if repo.lower() in SUMMARY_ONLY_REPOS else 'comment')
     if no_ref_mode not in ('comment', 'summary'):
         raise RuntimeError('NO_REF_MODE %r is neither comment nor summary' % no_ref_mode)
     text = '\n'.join([env('PR_TITLE', False), env('PR_BODY', False), env('PR_BRANCH', False)])
@@ -167,20 +186,18 @@ def run(argv):
         if 'done' in names:
             lines.append('#%d carries done, not moved (done is never overwritten)' % n)
             continue
-        if TARGET in names:
-            lines.append('#%d already in-review' % n)
-            continue
-        if 'in-specification' in names:
-            # Two gates sit on in-specification -> to-do (complete AND approved,
-            # issue-workflow.md v5). A merge must not jump them unseen.
-            lines.append('#%d is in-specification, not moved' % n)
-            pr_notes.append('coupler: #%d is in-specification, not moved — the move to to-do has two gates '
-                            '(complete and approved, issue-workflow.md v5)' % n)
+        movable = [l for l in STATUS_FROM if l in names]
+        if not movable:
+            # Move only from to-do or in-progress (Engels' cut, sharpening 1). in-review,
+            # in-specification (two gates, issue-workflow.md v5) or no status label: the
+            # coupler writes one field and never invents a state the board did not have.
+            carries = next((l for l in (TARGET, 'in-specification') if l in names), 'no status label')
+            lines.append('#%d carries %s, not moved' % (n, carries))
+            pr_notes.append('coupler: #%d carries %s, not moved' % (n, carries))
             continue
         args = ['issue', 'edit', str(n), '--repo', repo, '--add-label', TARGET]
-        for old in STATUS_FROM:
-            if old in names:
-                args += ['--remove-label', old]
+        for old in movable:
+            args += ['--remove-label', old]
         before = len(errors)
         attempt('#%d edit' % n, gh.write, *args)
         if len(errors) > before:
